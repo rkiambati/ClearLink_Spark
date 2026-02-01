@@ -1,0 +1,162 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  STAFF
+  DRIVER
+}
+
+enum ResourceType {
+  VOLUNTEER
+  VAN
+}
+
+enum AppointmentDestination {
+  NURSING_STATION
+  HOSPITAL
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  RESCHEDULED
+  COMPLETED
+}
+
+enum TransportStatus {
+  REQUESTED
+  ASSIGNED
+  ACCEPTED
+  DECLINED
+  PICKED_UP
+  DROPPED_OFF
+  AT_RISK
+  ESCALATED
+  MANUAL_REQUIRED
+  CANCELLED
+}
+
+model User {
+  id          String   @id @default(cuid())
+  role        Role
+  name        String
+  pinHash     String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  // Driver users can be linked to a Resource
+  resource    Resource?
+}
+
+model Resource {
+  id             String       @id @default(cuid())
+  type           ResourceType
+  displayName    String
+  startZone      String
+  wheelchairOk   Boolean      @default(false)
+
+  // Reliability tracking (Edge B)
+  reliabilityScore Int        @default(80) // 0-100
+  totalAssigned    Int        @default(0)
+  totalDeclined    Int        @default(0)
+  totalNoShows     Int        @default(0)
+
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  driverUserId   String?      @unique
+  driverUser     User?        @relation(fields: [driverUserId], references: [id])
+
+  tasks          TransportTask[]
+}
+
+model Patient {
+  id             String   @id @default(cuid())
+  externalRef    String?  @unique // optional “clinic ID” for demo
+  pickupZone     String
+  mobilityNeeds  String   // "NONE" | "ASSIST" | "WHEELCHAIR" (keep string for speed)
+  createdAt      DateTime @default(now())
+
+  appointments   Appointment[]
+}
+
+model Appointment {
+  id              String                @id @default(cuid())
+  patientId        String
+  patient          Patient              @relation(fields: [patientId], references: [id])
+
+  destination      AppointmentDestination
+  scheduledAt      DateTime
+  status           AppointmentStatus     @default(SCHEDULED)
+
+  // Staff-entered priority inputs
+  urgencyTier      Int                  // 0, 1, 2 (routine, time-sensitive, high-risk)
+  reasonCode       String               // "CARDIOLOGY_FU" etc.
+  winterMode       Boolean              @default(false)
+  distanceBand     Int                  // 0,1,2 simplified
+  missedHistory    Int                  @default(0)
+
+  transportNeeded  Boolean              @default(false)
+  priorityScore    Int                  @default(0)
+  priorityBreakdownJson String?
+
+
+  transportTask    TransportTask?
+
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+}
+
+model TransportTask {
+  id              String         @id @default(cuid())
+  appointmentId   String         @unique
+  appointment     Appointment    @relation(fields: [appointmentId], references: [id])
+
+  status          TransportStatus @default(REQUESTED)
+
+  assignedResourceId String?
+  assignedResource   Resource?    @relation(fields: [assignedResourceId], references: [id])
+
+  latestArrivalAt DateTime?
+  pickupAt        DateTime?
+
+  // For escalation rules
+  slaHours        Int            @default(24)
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model ZoneDistance {
+  id        String @id @default(cuid())
+  fromZone  String
+  toZone    String
+  km        Int
+
+  @@unique([fromZone, toZone])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actorRole   Role?
+  action      String
+  entityType  String
+  entityId    String
+  metaJson    String   @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
